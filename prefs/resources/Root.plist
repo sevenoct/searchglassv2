@@ -1,1 +1,26 @@
-
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>title</key><string>GlassSearch</string>
+	<key>items</key>
+	<array>
+		<dict>
+			<key>cell</key><string>PSGroupCell</string>
+			<key>label</key><string>Posisi Search Pill</string>
+			<key>footerText</key><string>Geser ke kanan untuk menaikkan pill, ke kiri untuk menurunkannya. 0 = posisi default tepat di atas dock.</string>
+		</dict>
+		<dict>
+			<key>cell</key><string>PSSliderCell</string>
+			<key>key</key><string>pillOffset</string>
+			<key>default</key><real>0</real>
+			<key>min</key><real>-60</real>
+			<key>max</key><real>400</real>
+			<key>showValue</key><true/>
+			<key>isContinuous</key><true/>
+			<key>defaults</key><string>com.hasan.glasssearch</string>
+			<key>PostNotification</key><string>com.hasan.glasssearch/prefs</string>
+		</dict>
+	</array>
+</dict>
+</plist>
