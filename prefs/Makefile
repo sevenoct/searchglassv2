@@ -6,6 +6,7 @@ include $(THEOS)/makefiles/common.mk
 BUNDLE_NAME = GlassSearchPrefs
 GlassSearchPrefs_FILES = GSRootListController.m
 GlassSearchPrefs_FRAMEWORKS = UIKit
+# Framework privat 'Preferences' tidak ada di SDK runner; kelasnya di-resolve saat runtime di app Settings
 GlassSearchPrefs_LDFLAGS = -undefined dynamic_lookup
 GlassSearchPrefs_INSTALL_PATH = /Library/PreferenceBundles
 GlassSearchPrefs_CFLAGS = -fobjc-arc
