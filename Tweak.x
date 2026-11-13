@@ -53,17 +53,17 @@ static UIColor *GSHexColor(id hex, CGFloat a, UIColor *def) {
     GSStyle *s = [GSStyle new];
     #define K(x) [NSString stringWithFormat:@"%@.%@", p, x]
     s.enabled = GSBool(K(@"Enabled"), YES);
-    s.blur = GSClamp(GSNum(K(@"Blur"), 10), 0, 60);
-    s.refraction = GSClamp(GSNum(K(@"Refraction"), 0.6), -2, 2);
+    s.blur = GSClamp(GSNum(K(@"Blur"), 20), 0, 60);
+    s.refraction = GSClamp(GSNum(K(@"Refraction"), 0.35), -2, 2);
     s.index = GSClamp(GSNum(K(@"RefractiveIndex"), 1.5), 1, 2.5);
     s.thickness = GSClamp(GSNum(K(@"GlassThickness"), 1), 0.1, 4);
-    s.bezel = GSClamp(GSNum(K(@"BezelWidth"), 12), 2, 60);
-    s.spec = (NSInteger)GSNum(K(@"SpecularType"), 3);
+    s.bezel = GSClamp(GSNum(K(@"BezelWidth"), 10), 2, 60);
+    s.spec = (NSInteger)GSNum(K(@"SpecularType"), 2);
     s.dispersion = GSBool(K(@"DispersionEnabled"), NO);
     s.dispStrength = GSClamp(GSNum(K(@"DispersionStrength"), 0.5), 0, 1);
     s.corner = GSClamp(GSNum(K(@"CornerRadius"), 100), 0, 100);
-    s.lightTint = GSHexColor(GSPref(K(@"LightTint")), GSClamp(GSNum(K(@"LightTintAlpha"), 0.2), 0, 1), UIColor.whiteColor);
-    s.darkTint = GSHexColor(GSPref(K(@"DarkTint")), GSClamp(GSNum(K(@"DarkTintAlpha"), 0.15), 0, 1), UIColor.blackColor);
+    s.lightTint = GSHexColor(GSPref(K(@"LightTint")), GSClamp(GSNum(K(@"LightTintAlpha"), 0.25), 0, 1), UIColor.whiteColor);
+    s.darkTint = GSHexColor(GSPref(K(@"DarkTint")), GSClamp(GSNum(K(@"DarkTintAlpha"), 0.10), 0, 1), UIColor.whiteColor);
     #undef K
     return s;
 }
@@ -176,13 +176,6 @@ static UIImage *GSDisplacementMap(CGSize sz, CGFloat radius, GSStyle *st) {
 }
 @end
 
-@interface GSBackdropView : UIView
-@end
-@implementation GSBackdropView
-+ (Class)layerClass { Class c = NSClassFromString(@"CABackdropLayer"); return c ?: [CALayer class]; }
-+ (BOOL)available { return [self layerClass] != [CALayer class]; }
-@end
-
 @interface GSGlassView : UIView
 @property (nonatomic, readonly) UIView *content;
 @property (nonatomic, copy) NSString *surface;          // @"Pill" atau @"Field"
@@ -198,13 +191,16 @@ static NSHashTable<GSGlassView *> *GSRegistry(void) {
     return t;
 }
 
+// Dasar kaca = UIVisualEffectView (backdrop yang pasti menangkap wallpaper), lalu filter
+// backdrop-nya diganti (blur/saturasi/refraksi) dan lapisan gelap bawaannya disembunyikan
+// supaya tampilannya ditentukan oleh tint + rim kita (lebih mirip dock / Control Center).
 @implementation GSGlassView {
-    UIVisualEffectView *_fallback;
-    GSBackdropView *_backdrop;
+    UIVisualEffectView *_fx;
     UIView *_tint;
     GSRimView *_red, *_blue, *_spec;
     CGFloat _motion;
     NSString *_lastKey;
+    BOOL _glassOn;
 }
 - (instancetype)initWithFrame:(CGRect)frame {
     if (!(self = [super initWithFrame:frame])) return nil;
@@ -213,14 +209,9 @@ static NSHashTable<GSGlassView *> *GSRegistry(void) {
     _surface = @"Field";
     UIViewAutoresizing flex = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
 
-    _fallback = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialDark]];
-    _fallback.frame = self.bounds; _fallback.autoresizingMask = flex;
-    [self addSubview:_fallback];
-
-    _backdrop = [[GSBackdropView alloc] initWithFrame:self.bounds];
-    _backdrop.autoresizingMask = flex;
-    _backdrop.userInteractionEnabled = NO;
-    [self addSubview:_backdrop];
+    _fx = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialDark]];
+    _fx.frame = self.bounds; _fx.autoresizingMask = flex;
+    [self addSubview:_fx];
 
     _tint = [[UIView alloc] initWithFrame:self.bounds];
     _tint.autoresizingMask = flex; _tint.userInteractionEnabled = NO;
@@ -254,24 +245,35 @@ static NSHashTable<GSGlassView *> *GSRegistry(void) {
     [super traitCollectionDidChange:prev];
     [self applyStyle];
 }
+- (void)didMoveToWindow {
+    [super didMoveToWindow];
+    _lastKey = nil;
+    [self setNeedsLayout];
+}
 - (void)setMotionAngle:(CGFloat)a { _motion = a; [self updateSpecAngle]; }
 - (void)updateSpecAngle { [_spec setAngle:M_PI_4 + _motion]; }
 
 - (void)applyStyle {
     GSStyle *st = [self style];
-    BOOL glass = st.enabled && [GSBackdropView available];
-    _backdrop.hidden = !glass;
-    _fallback.hidden = glass;
+    BOOL glass = st.enabled;
+    if (_glassOn && !glass) {
+        // kembali ke material bawaan: set ulang effect supaya UIKit memasang filter aslinya
+        _fx.effect = nil;
+        _fx.effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialDark];
+    }
+    _glassOn = glass;
+
     BOOL isDark = self.traitCollection.userInterfaceStyle != UIUserInterfaceStyleLight;
     _tint.backgroundColor = glass ? (isDark ? st.darkTint : st.lightTint) : UIColor.clearColor;
 
     UIColor *(^W)(CGFloat) = ^UIColor *(CGFloat a) { return [UIColor colorWithWhite:1 alpha:a]; };
     _spec.hidden = !(glass && st.spec > 0);
     switch (st.spec) {
-        case 1: [_spec setColors:@[W(0.30), W(0.30)] locations:@[@0, @1] width:0.8 angle:M_PI_4]; break;
-        case 2: [_spec setColors:@[W(0.55), W(0.06), W(0.0), W(0.30)] locations:@[@0, @0.35, @0.7, @1] width:1.0 angle:M_PI_4]; break;
-        case 3: [_spec setColors:@[W(0.95), W(0.12), W(0.04), W(0.18), W(0.80)] locations:@[@0, @0.28, @0.5, @0.72, @1] width:1.3 angle:M_PI_4]; break;
-        case 4: [_spec setColors:@[W(0.70), W(0.22), W(0.10), W(0.22), W(0.55)] locations:@[@0, @0.3, @0.5, @0.7, @1] width:1.8 angle:M_PI_4]; break;
+        // tipis & halus seperti dock / Control Center; terang hanya di sudut kiri-atas & kanan-bawah
+        case 1: [_spec setColors:@[W(0.22), W(0.22)] locations:@[@0, @1] width:0.7 angle:M_PI_4]; break;
+        case 2: [_spec setColors:@[W(0.50), W(0.12), W(0.05), W(0.10), W(0.30)] locations:@[@0, @0.3, @0.55, @0.8, @1] width:0.8 angle:M_PI_4]; break;
+        case 3: [_spec setColors:@[W(0.70), W(0.10), W(0.03), W(0.08), W(0.55)] locations:@[@0, @0.25, @0.5, @0.75, @1] width:0.9 angle:M_PI_4]; break;
+        case 4: [_spec setColors:@[W(0.45), W(0.14), W(0.06), W(0.14), W(0.40)] locations:@[@0, @0.3, @0.5, @0.7, @1] width:1.1 angle:M_PI_4]; break;
         default: break;
     }
     [self updateSpecAngle];
@@ -279,11 +281,11 @@ static NSHashTable<GSGlassView *> *GSRegistry(void) {
     BOOL disp = glass && st.dispersion && st.dispStrength > 0.01;
     _red.hidden = _blue.hidden = !disp;
     if (disp) {
-        CGFloat a = 0.55 * st.dispStrength;
+        CGFloat a = 0.35 * st.dispStrength;
         UIColor *rc = [UIColor colorWithRed:1 green:0.25 blue:0.25 alpha:a], *bc = [UIColor colorWithRed:0.25 green:0.55 blue:1 alpha:a];
-        [_red setColors:@[rc, rc] locations:@[@0, @1] width:1.2 angle:M_PI_4];
-        [_blue setColors:@[bc, bc] locations:@[@0, @1] width:1.2 angle:M_PI_4];
-        CGFloat o = 0.4 + 1.2 * st.dispStrength;
+        [_red setColors:@[rc, rc] locations:@[@0, @1] width:0.9 angle:M_PI_4];
+        [_blue setColors:@[bc, bc] locations:@[@0, @1] width:0.9 angle:M_PI_4];
+        CGFloat o = 0.3 + 0.9 * st.dispStrength;
         _red.transform = CGAffineTransformMakeTranslation(-o, -o);
         _blue.transform = CGAffineTransformMakeTranslation(o, o);
     }
@@ -293,9 +295,18 @@ static NSHashTable<GSGlassView *> *GSRegistry(void) {
 
 - (void)refreshFilters {
     GSStyle *st = [self style];
-    if (!st.enabled || ![GSBackdropView available]) return;
+    if (!st.enabled) return;
     CGSize sz = self.bounds.size;
     if (sz.width < 2 || sz.height < 2) return;
+
+    // backdrop internal milik UIVisualEffectView + sembunyikan lapisan warna bawaannya
+    UIView *bd = nil;
+    for (UIView *s in _fx.subviews) {
+        if (strstr(object_getClassName(s), "Backdrop")) bd = s;
+        else s.hidden = YES;
+    }
+    if (!bd) return;
+
     NSMutableArray *f = [NSMutableArray array];
     if (fabs(st.refraction) > 0.001 && st.index > 1.001) {
         id d = GSFilter(@"displacementMap");
@@ -311,30 +322,26 @@ static NSHashTable<GSGlassView *> *GSRegistry(void) {
     id blur = GSFilter(@"gaussianBlur");
     if (blur) {
         @try {
-            [blur setValue:@(st.blur * gsLiquidity) forKey:@"inputRadius"];
+            [blur setValue:@(MAX(0.5, st.blur * gsLiquidity)) forKey:@"inputRadius"];
             [blur setValue:@YES forKey:@"inputNormalizeEdges"];
             [f addObject:blur];
         } @catch (id e) {}
     }
     id sat = GSFilter(@"colorSaturate");
-    if (sat) { @try { [sat setValue:@1.7 forKey:@"inputAmount"]; [f addObject:sat]; } @catch (id e) {} }
+    if (sat) { @try { [sat setValue:@1.8 forKey:@"inputAmount"]; [f addObject:sat]; } @catch (id e) {} }
+    if (!f.count) return;       // filter privat tidak ada -> biarkan material bawaan
 
-    CALayer *bl = _backdrop.layer;
+    CALayer *bl = bd.layer;
     @try {
-        [bl setValue:f forKey:@"filters"];
-        [bl setValue:@(gsQuality) forKey:@"scale"];
-        [bl setValue:@YES forKey:@"windowServerAware"];
-        [bl setValue:@YES forKey:@"allowsInPlaceFiltering"];
+        bl.filters = f;
+        if ([bl respondsToSelector:NSSelectorFromString(@"setScale:")]) [bl setValue:@(gsQuality) forKey:@"scale"];
     } @catch (id e) {}
-    // kalau filter privat tidak tersedia sama sekali, pakai blur sistem
-    _fallback.hidden = f.count > 0;
-    _backdrop.hidden = f.count == 0;
 }
 
 - (void)layoutSubviews {
     [super layoutSubviews];
-    NSString *k = [NSString stringWithFormat:@"%.1f,%.1f,%.1f", self.bounds.size.width, self.bounds.size.height, self.layer.cornerRadius];
     [_red setNeedsLayout]; [_blue setNeedsLayout]; [_spec setNeedsLayout];
+    NSString *k = [NSString stringWithFormat:@"%.1f,%.1f,%.1f", self.bounds.size.width, self.bounds.size.height, self.layer.cornerRadius];
     if ([k isEqualToString:_lastKey]) return;
     _lastKey = k;
     [self refreshFilters];
@@ -743,6 +750,7 @@ static void GSOpenApp(NSString *bid) {
 
 - (void)presentFromRect:(CGRect)rect {
     if (_window) return;
+    GSLoadPrefs();
     CGRect scr = UIScreen.mainScreen.bounds;
     if (CGRectIsEmpty(rect)) rect = CGRectMake(CGRectGetMidX(scr) - 46, CGRectGetHeight(scr) - 150, 92, 30);
     _pillRect = rect; _dismissing = NO; _kbSeen = NO;

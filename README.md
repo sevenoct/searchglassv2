@@ -1,4 +1,4 @@
-# GlassSearch 0.3 (iOS 15, SpringBoard)
+# GlassSearch 0.3.1 (iOS 15, SpringBoard)
 
 Baru di 0.3: renderer glass + Settings bergaya Liquid (Gl)ass.
 - Glass: CABackdropLayer + CAFilter (displacementMap, gaussianBlur, colorSaturate), ring specular (None/Border/Glass/iOS 26/iOS 27),

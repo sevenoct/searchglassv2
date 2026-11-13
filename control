@@ -1,6 +1,6 @@
 Package: com.hasan.glasssearch
 Name: GlassSearch
-Version: 0.3.0
+Version: 0.3.1
 Architecture: iphoneos-arm64
 Description: Search pill ala iOS 26 (liquid glass) untuk iOS 15, setting lengkap gaya Liquid (Gl)ass
 Maintainer: Hasan
