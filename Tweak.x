@@ -3,6 +3,7 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
+#import <CoreMotion/CoreMotion.h>
 
 @interface LSApplicationWorkspace : NSObject
 + (instancetype)defaultWorkspace;
@@ -14,55 +15,375 @@
 + (UIImage *)_applicationIconImageForBundleIdentifier:(NSString *)bid format:(int)format scale:(CGFloat)scale;
 @end
 
-#pragma mark - Glass views
+#pragma mark - Pengaturan (Settings > GlassSearch), per permukaan: "Pill" dan "Field"
 
-@interface GSGradientView : UIView
+#define GS_DOMAIN CFSTR("com.hasan.glasssearch")
+
+static id GSPref(NSString *key) {
+    return CFBridgingRelease(CFPreferencesCopyAppValue((__bridge CFStringRef)key, GS_DOMAIN));
+}
+static CGFloat GSNum(NSString *k, CGFloat def) {
+    id v = GSPref(k);
+    return [v respondsToSelector:@selector(doubleValue)] ? (CGFloat)[v doubleValue] : def;
+}
+static BOOL GSBool(NSString *k, BOOL def) {
+    id v = GSPref(k);
+    return [v respondsToSelector:@selector(boolValue)] ? [v boolValue] : def;
+}
+static CGFloat GSClamp(CGFloat v, CGFloat lo, CGFloat hi) { return MAX(lo, MIN(hi, v)); }
+static UIColor *GSHexColor(id hex, CGFloat a, UIColor *def) {
+    if ([hex isKindOfClass:NSString.class]) {
+        NSString *h = [hex stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"# \n"]];
+        unsigned v = 0;
+        if (h.length == 6 && [[NSScanner scannerWithString:h] scanHexInt:&v])
+            return [UIColor colorWithRed:((v >> 16) & 255) / 255.0 green:((v >> 8) & 255) / 255.0 blue:(v & 255) / 255.0 alpha:a];
+    }
+    return [def colorWithAlphaComponent:a];
+}
+
+@interface GSStyle : NSObject
+@property (nonatomic) BOOL enabled, dispersion;
+@property (nonatomic) CGFloat blur, refraction, index, thickness, bezel, dispStrength, corner;
+@property (nonatomic) NSInteger spec;   // 0 None, 1 Border, 2 Glass, 3 iOS 26, 4 iOS 27
+@property (nonatomic, strong) UIColor *lightTint, *darkTint;
++ (instancetype)loadWithPrefix:(NSString *)p;
 @end
-@implementation GSGradientView
+@implementation GSStyle
++ (instancetype)loadWithPrefix:(NSString *)p {
+    GSStyle *s = [GSStyle new];
+    #define K(x) [NSString stringWithFormat:@"%@.%@", p, x]
+    s.enabled = GSBool(K(@"Enabled"), YES);
+    s.blur = GSClamp(GSNum(K(@"Blur"), 10), 0, 60);
+    s.refraction = GSClamp(GSNum(K(@"Refraction"), 0.6), -2, 2);
+    s.index = GSClamp(GSNum(K(@"RefractiveIndex"), 1.5), 1, 2.5);
+    s.thickness = GSClamp(GSNum(K(@"GlassThickness"), 1), 0.1, 4);
+    s.bezel = GSClamp(GSNum(K(@"BezelWidth"), 12), 2, 60);
+    s.spec = (NSInteger)GSNum(K(@"SpecularType"), 3);
+    s.dispersion = GSBool(K(@"DispersionEnabled"), NO);
+    s.dispStrength = GSClamp(GSNum(K(@"DispersionStrength"), 0.5), 0, 1);
+    s.corner = GSClamp(GSNum(K(@"CornerRadius"), 100), 0, 100);
+    s.lightTint = GSHexColor(GSPref(K(@"LightTint")), GSClamp(GSNum(K(@"LightTintAlpha"), 0.2), 0, 1), UIColor.whiteColor);
+    s.darkTint = GSHexColor(GSPref(K(@"DarkTint")), GSClamp(GSNum(K(@"DarkTintAlpha"), 0.15), 0, 1), UIColor.blackColor);
+    #undef K
+    return s;
+}
+@end
+
+static BOOL gsMaster = YES, gsMotion = NO;
+static CGFloat gsLiquidity = 1, gsQuality = 0.5, gsMotionSens = 1;
+static CGFloat gsOffset = 0;   // pill naik (+) / turun (-) dari posisi default di atas dock
+static GSStyle *gsStylePill, *gsStyleField;
+
+#pragma mark - Glass views (gaya Liquid Glass: backdrop blur + refraksi + specular rim + dispersi)
+
+static id GSFilter(NSString *type) {
+    Class CF = NSClassFromString(@"CAFilter");
+    if (!CF) return nil;
+    return ((id (*)(id, SEL, id))objc_msgSend)(CF, NSSelectorFromString(@"filterWithType:"), type);
+}
+
+// Peta displacement: di tepi (selebar "bezel") cahaya dibelokkan; 128 = netral
+static UIImage *GSDisplacementMap(CGSize sz, CGFloat radius, GSStyle *st) {
+    static NSCache *cache;
+    if (!cache) { cache = [NSCache new]; cache.countLimit = 24; }
+    int W = MAX(2, (int)lround(sz.width)), H = MAX(2, (int)lround(sz.height));
+    NSString *key = [NSString stringWithFormat:@"%d,%d,%.1f,%.1f,%.2f,%.2f,%.2f", W, H, radius, st.bezel, st.refraction, st.index, st.thickness];
+    UIImage *hit = [cache objectForKey:key];
+    if (hit) return hit;
+    CGFloat strength = GSClamp((st.index - 1.0) * st.refraction * st.thickness * 1.6, -1, 1);
+    uint8_t *buf = malloc((size_t)W * H * 4);
+    float hx = W / 2.0f, hy = H / 2.0f;
+    float r = (float)MIN(radius, MIN(hx, hy)), bz = (float)MAX(1, st.bezel);
+    for (int y = 0; y < H; y++) {
+        for (int x = 0; x < W; x++) {
+            float px = x + 0.5f - hx, py = y + 0.5f - hy;
+            float qx = fabsf(px) - (hx - r), qy = fabsf(py) - (hy - r);
+            float ox = MAX(qx, 0), oy = MAX(qy, 0);
+            float outside = sqrtf(ox * ox + oy * oy);
+            float sd = outside + MIN(MAX(qx, qy), 0) - r;     // negatif di dalam
+            float d = -sd;
+            uint8_t R = 128, G = 128;
+            if (d >= 0 && d < bz) {
+                float gx, gy;
+                if (qx > 0 && qy > 0 && outside > 0) { gx = (px < 0 ? -ox : ox) / outside; gy = (py < 0 ? -oy : oy) / outside; }
+                else if (qx > qy) { gx = px < 0 ? -1 : 1; gy = 0; }
+                else { gx = 0; gy = py < 0 ? -1 : 1; }
+                float t = 1.0f - d / bz;
+                float m = powf(t, 2.2f) * (float)strength;
+                R = (uint8_t)GSClamp(128 + 127 * gx * m, 0, 255);
+                G = (uint8_t)GSClamp(128 + 127 * gy * m, 0, 255);
+            }
+            uint8_t *p = buf + ((size_t)y * W + x) * 4;
+            p[0] = R; p[1] = G; p[2] = 128; p[3] = 255;
+        }
+    }
+    CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+    CGContextRef ctx = CGBitmapContextCreate(buf, W, H, 8, (size_t)W * 4, cs, kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+    CGImageRef ci = CGBitmapContextCreateImage(ctx);
+    UIImage *img = [UIImage imageWithCGImage:ci scale:1 orientation:UIImageOrientationUp];
+    CGImageRelease(ci); CGContextRelease(ctx); CGColorSpaceRelease(cs); free(buf);
+    [cache setObject:img forKey:key];
+    return img;
+}
+
+// Ring tipis berwarna gradient (specular / dispersi), di-mask jadi garis tepi
+@interface GSRimView : UIView
+@property (nonatomic) CGFloat lineWidth;
+- (void)setColors:(NSArray *)colors locations:(NSArray *)loc width:(CGFloat)w angle:(CGFloat)a;
+- (void)setAngle:(CGFloat)a;
+@end
+@implementation GSRimView { CAShapeLayer *_mask; }
 + (Class)layerClass { return [CAGradientLayer class]; }
+- (instancetype)initWithFrame:(CGRect)f {
+    if (!(self = [super initWithFrame:f])) return nil;
+    self.userInteractionEnabled = NO;
+    self.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    _mask = [CAShapeLayer layer];
+    _mask.fillColor = NULL;
+    _mask.strokeColor = UIColor.whiteColor.CGColor;
+    self.layer.mask = _mask;
+    _lineWidth = 1;
+    return self;
+}
+- (void)setColors:(NSArray *)colors locations:(NSArray *)loc width:(CGFloat)w angle:(CGFloat)a {
+    CAGradientLayer *gl = (CAGradientLayer *)self.layer;
+    NSMutableArray *cg = [NSMutableArray array];
+    for (UIColor *c in colors) [cg addObject:(id)c.CGColor];
+    gl.colors = cg;
+    gl.locations = loc;
+    _lineWidth = w;
+    [self setAngle:a];
+    [self setNeedsLayout];
+}
+- (void)setAngle:(CGFloat)a {
+    CAGradientLayer *gl = (CAGradientLayer *)self.layer;
+    CGFloat dx = cos(a) * 0.5, dy = sin(a) * 0.5;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    gl.startPoint = CGPointMake(0.5 - dx, 0.5 - dy);
+    gl.endPoint = CGPointMake(0.5 + dx, 0.5 + dy);
+    [CATransaction commit];
+}
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    CGFloat w = _lineWidth, r = self.superview.layer.cornerRadius;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    _mask.frame = self.bounds;
+    _mask.lineWidth = w;
+    _mask.path = [UIBezierPath bezierPathWithRoundedRect:CGRectInset(self.bounds, w / 2, w / 2) cornerRadius:MAX(0, r - w / 2)].CGPath;
+    [CATransaction commit];
+}
 @end
 
-// Blur + sheen (kilau) + border tipis = pendekatan liquid glass di iOS 15
+@interface GSBackdropView : UIView
+@end
+@implementation GSBackdropView
++ (Class)layerClass { Class c = NSClassFromString(@"CABackdropLayer"); return c ?: [CALayer class]; }
++ (BOOL)available { return [self layerClass] != [CALayer class]; }
+@end
+
 @interface GSGlassView : UIView
 @property (nonatomic, readonly) UIView *content;
+@property (nonatomic, copy) NSString *surface;          // @"Pill" atau @"Field"
+@property (nonatomic) CGFloat maxRadius;                // 0 = tanpa batas
+- (void)applyStyle;
+- (void)setMotionAngle:(CGFloat)a;
+- (CGFloat)radiusForSize:(CGSize)s;
 @end
-@implementation GSGlassView
+
+static NSHashTable<GSGlassView *> *GSRegistry(void) {
+    static NSHashTable *t;
+    if (!t) t = [NSHashTable weakObjectsHashTable];
+    return t;
+}
+
+@implementation GSGlassView {
+    UIVisualEffectView *_fallback;
+    GSBackdropView *_backdrop;
+    UIView *_tint;
+    GSRimView *_red, *_blue, *_spec;
+    CGFloat _motion;
+    NSString *_lastKey;
+}
 - (instancetype)initWithFrame:(CGRect)frame {
     if (!(self = [super initWithFrame:frame])) return nil;
     self.clipsToBounds = YES;
     self.layer.cornerCurve = kCACornerCurveContinuous;
-    self.layer.borderWidth = 0.8;
-    self.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.30].CGColor;
+    _surface = @"Field";
+    UIViewAutoresizing flex = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
 
-    UIVisualEffectView *blur = [[UIVisualEffectView alloc] initWithEffect:
-        [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialDark]];
-    blur.frame = self.bounds;
-    blur.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    [self addSubview:blur];
+    _fallback = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialDark]];
+    _fallback.frame = self.bounds; _fallback.autoresizingMask = flex;
+    [self addSubview:_fallback];
 
-    GSGradientView *sheen = [[GSGradientView alloc] initWithFrame:self.bounds];
-    sheen.userInteractionEnabled = NO;
-    sheen.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    CAGradientLayer *gl = (CAGradientLayer *)sheen.layer;
-    gl.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.28].CGColor,
-                  (id)[UIColor colorWithWhite:1 alpha:0.05].CGColor,
-                  (id)[UIColor colorWithWhite:1 alpha:0.00].CGColor,
-                  (id)[UIColor colorWithWhite:1 alpha:0.12].CGColor];
-    gl.locations = @[@0, @0.35, @0.7, @1];
-    gl.startPoint = CGPointMake(0.1, 0);
-    gl.endPoint = CGPointMake(0.9, 1);
-    [self addSubview:sheen];
+    _backdrop = [[GSBackdropView alloc] initWithFrame:self.bounds];
+    _backdrop.autoresizingMask = flex;
+    _backdrop.userInteractionEnabled = NO;
+    [self addSubview:_backdrop];
+
+    _tint = [[UIView alloc] initWithFrame:self.bounds];
+    _tint.autoresizingMask = flex; _tint.userInteractionEnabled = NO;
+    [self addSubview:_tint];
+
+    _red = [[GSRimView alloc] initWithFrame:self.bounds];
+    _blue = [[GSRimView alloc] initWithFrame:self.bounds];
+    _spec = [[GSRimView alloc] initWithFrame:self.bounds];
+    [self addSubview:_red]; [self addSubview:_blue]; [self addSubview:_spec];
 
     _content = [[UIView alloc] initWithFrame:self.bounds];
-    _content.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    _content.autoresizingMask = flex;
     [self addSubview:_content];
+
+    [GSRegistry() addObject:self];
+    [self applyStyle];
     return self;
+}
+- (void)setSurface:(NSString *)s { _surface = [s copy]; [self applyStyle]; }
+- (GSStyle *)style {
+    GSStyle *st = [_surface isEqualToString:@"Pill"] ? gsStylePill : gsStyleField;
+    if (!st) st = [GSStyle loadWithPrefix:_surface];
+    return st;
+}
+- (CGFloat)radiusForSize:(CGSize)s {
+    CGFloat full = MIN(s.width, s.height) / 2;
+    if (_maxRadius > 0) full = MIN(full, _maxRadius);
+    return full * [self style].corner / 100.0;
+}
+- (void)traitCollectionDidChange:(UITraitCollection *)prev {
+    [super traitCollectionDidChange:prev];
+    [self applyStyle];
+}
+- (void)setMotionAngle:(CGFloat)a { _motion = a; [self updateSpecAngle]; }
+- (void)updateSpecAngle { [_spec setAngle:M_PI_4 + _motion]; }
+
+- (void)applyStyle {
+    GSStyle *st = [self style];
+    BOOL glass = st.enabled && [GSBackdropView available];
+    _backdrop.hidden = !glass;
+    _fallback.hidden = glass;
+    BOOL isDark = self.traitCollection.userInterfaceStyle != UIUserInterfaceStyleLight;
+    _tint.backgroundColor = glass ? (isDark ? st.darkTint : st.lightTint) : UIColor.clearColor;
+
+    UIColor *(^W)(CGFloat) = ^UIColor *(CGFloat a) { return [UIColor colorWithWhite:1 alpha:a]; };
+    _spec.hidden = !(glass && st.spec > 0);
+    switch (st.spec) {
+        case 1: [_spec setColors:@[W(0.30), W(0.30)] locations:@[@0, @1] width:0.8 angle:M_PI_4]; break;
+        case 2: [_spec setColors:@[W(0.55), W(0.06), W(0.0), W(0.30)] locations:@[@0, @0.35, @0.7, @1] width:1.0 angle:M_PI_4]; break;
+        case 3: [_spec setColors:@[W(0.95), W(0.12), W(0.04), W(0.18), W(0.80)] locations:@[@0, @0.28, @0.5, @0.72, @1] width:1.3 angle:M_PI_4]; break;
+        case 4: [_spec setColors:@[W(0.70), W(0.22), W(0.10), W(0.22), W(0.55)] locations:@[@0, @0.3, @0.5, @0.7, @1] width:1.8 angle:M_PI_4]; break;
+        default: break;
+    }
+    [self updateSpecAngle];
+
+    BOOL disp = glass && st.dispersion && st.dispStrength > 0.01;
+    _red.hidden = _blue.hidden = !disp;
+    if (disp) {
+        CGFloat a = 0.55 * st.dispStrength;
+        UIColor *rc = [UIColor colorWithRed:1 green:0.25 blue:0.25 alpha:a], *bc = [UIColor colorWithRed:0.25 green:0.55 blue:1 alpha:a];
+        [_red setColors:@[rc, rc] locations:@[@0, @1] width:1.2 angle:M_PI_4];
+        [_blue setColors:@[bc, bc] locations:@[@0, @1] width:1.2 angle:M_PI_4];
+        CGFloat o = 0.4 + 1.2 * st.dispStrength;
+        _red.transform = CGAffineTransformMakeTranslation(-o, -o);
+        _blue.transform = CGAffineTransformMakeTranslation(o, o);
+    }
+    _lastKey = nil;
+    [self setNeedsLayout];
+}
+
+- (void)refreshFilters {
+    GSStyle *st = [self style];
+    if (!st.enabled || ![GSBackdropView available]) return;
+    CGSize sz = self.bounds.size;
+    if (sz.width < 2 || sz.height < 2) return;
+    NSMutableArray *f = [NSMutableArray array];
+    if (fabs(st.refraction) > 0.001 && st.index > 1.001) {
+        id d = GSFilter(@"displacementMap");
+        UIImage *map = GSDisplacementMap(sz, self.layer.cornerRadius, st);
+        if (d && map) {
+            @try {
+                [d setValue:(__bridge id)map.CGImage forKey:@"inputImage"];
+                [d setValue:@(st.bezel * 1.2) forKey:@"inputAmount"];
+                [f addObject:d];
+            } @catch (id e) {}
+        }
+    }
+    id blur = GSFilter(@"gaussianBlur");
+    if (blur) {
+        @try {
+            [blur setValue:@(st.blur * gsLiquidity) forKey:@"inputRadius"];
+            [blur setValue:@YES forKey:@"inputNormalizeEdges"];
+            [f addObject:blur];
+        } @catch (id e) {}
+    }
+    id sat = GSFilter(@"colorSaturate");
+    if (sat) { @try { [sat setValue:@1.7 forKey:@"inputAmount"]; [f addObject:sat]; } @catch (id e) {} }
+
+    CALayer *bl = _backdrop.layer;
+    @try {
+        [bl setValue:f forKey:@"filters"];
+        [bl setValue:@(gsQuality) forKey:@"scale"];
+        [bl setValue:@YES forKey:@"windowServerAware"];
+        [bl setValue:@YES forKey:@"allowsInPlaceFiltering"];
+    } @catch (id e) {}
+    // kalau filter privat tidak tersedia sama sekali, pakai blur sistem
+    _fallback.hidden = f.count > 0;
+    _backdrop.hidden = f.count == 0;
+}
+
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    NSString *k = [NSString stringWithFormat:@"%.1f,%.1f,%.1f", self.bounds.size.width, self.bounds.size.height, self.layer.cornerRadius];
+    [_red setNeedsLayout]; [_blue setNeedsLayout]; [_spec setNeedsLayout];
+    if ([k isEqualToString:_lastKey]) return;
+    _lastKey = k;
+    [self refreshFilters];
 }
 @end
 
 static UIImage *GSSymbol(NSString *name, CGFloat size) {
     UIImageSymbolConfiguration *cfg = [UIImageSymbolConfiguration configurationWithPointSize:size weight:UIImageSymbolWeightMedium];
     return [UIImage systemImageNamed:name withConfiguration:cfg];
+}
+
+// Highlight mengikuti arah perangkat (kompas)
+@interface GSMotion : NSObject
++ (void)refresh;
+@end
+@implementation GSMotion
++ (void)refresh {
+    static CMMotionManager *mm;
+    BOOL want = gsMotion && gsMaster && GSRegistry().count > 0;
+    if (want && !mm) {
+        mm = [CMMotionManager new];
+        mm.deviceMotionUpdateInterval = 1.0 / 30;
+        CMAttitudeReferenceFrame fr = ([CMMotionManager availableAttitudeReferenceFrames] & CMAttitudeReferenceFrameXMagneticNorthZVertical)
+            ? CMAttitudeReferenceFrameXMagneticNorthZVertical : CMAttitudeReferenceFrameXArbitraryZVertical;
+        [mm startDeviceMotionUpdatesUsingReferenceFrame:fr toQueue:NSOperationQueue.mainQueue withHandler:^(CMDeviceMotion *m, NSError *e) {
+            if (!m) return;
+            CGFloat a = m.attitude.yaw * gsMotionSens;
+            for (GSGlassView *v in GSRegistry().allObjects) [v setMotionAngle:a];
+        }];
+    } else if (!want && mm) {
+        [mm stopDeviceMotionUpdates];
+        mm = nil;
+        for (GSGlassView *v in GSRegistry().allObjects) [v setMotionAngle:0];
+    }
+}
+@end
+
+static void GSLoadPrefs(void) {
+    CFPreferencesAppSynchronize(GS_DOMAIN);
+    gsMaster = GSBool(@"Enabled", YES);
+    gsLiquidity = GSClamp(GSNum(@"Liquidity", 1), 0.2, 3);
+    gsQuality = GSClamp(GSNum(@"Quality", 0.5), 0.15, 1);
+    gsMotion = GSBool(@"MotionHighlights", NO);
+    gsMotionSens = GSClamp(GSNum(@"MotionSensitivity", 1), 0, 3);
+    gsOffset = GSClamp(GSNum(@"pillOffset", 0), -60, 400);
+    gsStylePill = [GSStyle loadWithPrefix:@"Pill"];
+    gsStyleField = [GSStyle loadWithPrefix:@"Field"];
+    for (GSGlassView *v in GSRegistry().allObjects) [v applyStyle];
+    [GSMotion refresh];
 }
 
 // Search bar bawah: ikon kaca pembesar + text field + mic
@@ -105,22 +426,6 @@ static UIImage *GSSymbol(NSString *name, CGFloat size) {
 }
 @end
 
-#pragma mark - Pengaturan (lewat Settings > GlassSearch)
-
-#define GS_DOMAIN CFSTR("com.hasan.glasssearch")
-static CGFloat gsOffset = 0;   // pill naik (+) / turun (-) dari posisi default di atas dock
-
-static void GSLoadPrefs(void) {
-    CFPreferencesAppSynchronize(GS_DOMAIN);
-    CFPropertyListRef v = CFPreferencesCopyAppValue(CFSTR("pillOffset"), GS_DOMAIN);
-    double d = 0;
-    if (v) {
-        if (CFGetTypeID(v) == CFNumberGetTypeID()) CFNumberGetValue((CFNumberRef)v, kCFNumberDoubleType, &d);
-        CFRelease(v);
-    }
-    gsOffset = (CGFloat)MAX(-60.0, MIN(500.0, d));
-}
-
 #pragma mark - Pill di home screen
 
 static GSGlassView *gsPill;
@@ -162,7 +467,7 @@ static void GSLayoutPill(void) {
     CGFloat cy = y + 15;
 
     gsPill.frame = CGRectMake(CGRectGetMidX(root.bounds) - w / 2, cy - h / 2, w, h);
-    gsPill.layer.cornerRadius = h / 2;
+    gsPill.layer.cornerRadius = [gsPill radiusForSize:CGSizeMake(w, h)];
 
     CGPoint c = CGPointMake(w / 2, h / 2);
     gsPillInner.center = c;
@@ -333,6 +638,7 @@ static void GSOpenApp(NSString *bid) {
     [self.view addSubview:_dim];
 
     _card = [[GSGlassView alloc] initWithFrame:CGRectZero];
+    _card.maxRadius = 26;
     _table = [[UITableView alloc] initWithFrame:CGRectZero style:UITableViewStylePlain];
     _table.backgroundColor = UIColor.clearColor;
     _table.separatorColor = [UIColor colorWithWhite:1 alpha:0.12];
@@ -403,7 +709,7 @@ static void GSOpenApp(NSString *bid) {
     CGFloat avail = MAX(0, CGRectGetMinY(_bar.frame) - 10 - top);
     CGFloat h = MIN(_results.count * 56.0, avail);
     _card.frame = CGRectMake(16, CGRectGetMinY(_bar.frame) - 10 - h, W - 32, h);
-    _card.layer.cornerRadius = 26;
+    _card.layer.cornerRadius = [_card radiusForSize:_card.frame.size];
     _card.alpha = _results.count ? 1 : 0;
 }
 
@@ -411,7 +717,7 @@ static void GSOpenApp(NSString *bid) {
     [UIView animateWithDuration:d delay:0 options:o | UIViewAnimationOptionBeginFromCurrentState animations:^{
         CGFloat W = self.view.bounds.size.width;
         self->_bar.frame = CGRectMake(16, self->_kbTop - 10 - 46, W - 32, 46);
-        self->_bar.layer.cornerRadius = 23;
+        self->_bar.layer.cornerRadius = [self->_bar radiusForSize:self->_bar.frame.size];
         self->_bar.icon.alpha = self->_bar.field.alpha = self->_bar.mic.alpha = 1;
         [self layoutCard];
     } completion:nil];
@@ -454,7 +760,7 @@ static void GSOpenApp(NSString *bid) {
     _results = @[]; [_table reloadData];
     _bar.field.text = @"";
     _backdrop.alpha = 0; _dim.alpha = 0; _card.alpha = 0;
-    _bar.frame = rect; _bar.layer.cornerRadius = rect.size.height / 2;
+    _bar.frame = rect; _bar.layer.cornerRadius = [_bar radiusForSize:rect.size];
     _bar.icon.alpha = _bar.field.alpha = _bar.mic.alpha = 0;
     _kbTop = CGRectGetHeight(scr) - 300;
 
@@ -477,7 +783,7 @@ static void GSOpenApp(NSString *bid) {
     [UIView animateWithDuration:0.22 delay:0 options:UIViewAnimationOptionCurveEaseInOut animations:^{
         self->_backdrop.alpha = 0; self->_dim.alpha = 0; self->_card.alpha = 0;
         self->_bar.frame = self->_pillRect;
-        self->_bar.layer.cornerRadius = self->_pillRect.size.height / 2;
+        self->_bar.layer.cornerRadius = [self->_bar radiusForSize:self->_pillRect.size];
         self->_bar.icon.alpha = self->_bar.field.alpha = self->_bar.mic.alpha = 0;
     } completion:^(BOOL f) {
         [[NSNotificationCenter defaultCenter] removeObserver:self];
@@ -554,7 +860,7 @@ static void GSPresentFromNative(void) {
     return s;
 }
 - (BOOL)gestureRecognizerShouldBegin:(UIPanGestureRecognizer *)g {
-    if (gsPillSuppressed) return NO;
+    if (gsPillSuppressed || !gsMaster) return NO;
     UIView *v = g.view;
     @try { if ([[v valueForKey:@"isEditing"] boolValue]) return NO; } @catch (id e) {}
     CGPoint vel = [g velocityInView:v];
@@ -616,6 +922,7 @@ static BOOL GSInRootFolder(UIView *v) {
         GSReloadAppsAsync();
         gsDots = [NSMutableArray array];
         gsPill = [[GSGlassView alloc] initWithFrame:CGRectMake(0, 0, 92, 30)];
+        gsPill.surface = @"Pill";
         gsPill.layer.cornerRadius = 15;
 
         gsPillInner = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 92, 30)];
@@ -637,6 +944,7 @@ static BOOL GSInRootFolder(UIView *v) {
         [gsPill.content addSubview:gsDotsBox];
 
         [gsPill addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:[GSController shared] action:@selector(pillTapped)]];
+        [GSMotion refresh];
     }
     if (gsPill.superview != root) [root addSubview:gsPill];
 
@@ -660,7 +968,7 @@ static BOOL GSInRootFolder(UIView *v) {
 
     UIView *dock = GSDockOf(root);
     GSLayoutPill();
-    gsPill.hidden = gsPillSuppressed || (dock && dock.hidden);
+    gsPill.hidden = gsPillSuppressed || !gsMaster || (dock && dock.hidden);
     [root bringSubviewToFront:gsPill];
 }
 %end

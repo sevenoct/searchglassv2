@@ -10,7 +10,7 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME = GlassSearch
 GlassSearch_FILES = Tweak.x
 GlassSearch_CFLAGS = -fobjc-arc -Wno-deprecated-declarations -Wno-unused-variable
-GlassSearch_FRAMEWORKS = UIKit QuartzCore
+GlassSearch_FRAMEWORKS = UIKit QuartzCore CoreMotion
 
 include $(THEOS_MAKE_PATH)/tweak.mk
 
