@@ -7,6 +7,7 @@ extern char **environ;
     NSArray *_specifiers;
 }
 - (NSArray *)loadSpecifiersFromPlistName:(NSString *)name target:(id)target;
+- (void)reloadSpecifiers;
 @end
 
 @interface GSRootListController : PSListController
@@ -16,6 +17,18 @@ extern char **environ;
 - (NSArray *)specifiers {
     if (!_specifiers) _specifiers = [self loadSpecifiersFromPlistName:@"Root" target:self];
     return _specifiers;
+}
+- (void)resetDefaults {
+    CFStringRef dom = CFSTR("com.hasan.glasssearch");
+    CFArrayRef keys = CFPreferencesCopyKeyList(dom, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+    if (keys) {
+        CFPreferencesSetMultiple(NULL, keys, dom, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+        CFRelease(keys);
+    }
+    CFPreferencesAppSynchronize(dom);
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+        CFSTR("com.hasan.glasssearch/prefs"), NULL, NULL, YES);
+    [self reloadSpecifiers];
 }
 - (void)respring {
     NSArray *tries = @[@"/var/jb/usr/bin/sbreload", @"/usr/bin/sbreload"];
