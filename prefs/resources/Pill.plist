@@ -30,34 +30,6 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>Geser pill naik/turun dari posisi default di atas dock.</string>
-			<key>label</key>
-			<string>Position</string>
-		</dict>
-		<dict>
-			<key>PostNotification</key>
-			<string>com.hasan.glasssearch/prefs</string>
-			<key>cell</key>
-			<string>PSSliderCell</string>
-			<key>default</key>
-			<real>0.0</real>
-			<key>defaults</key>
-			<string>com.hasan.glasssearch</string>
-			<key>isContinuous</key>
-			<true/>
-			<key>key</key>
-			<string>pillOffset</string>
-			<key>max</key>
-			<real>400.0</real>
-			<key>min</key>
-			<real>-60.0</real>
-			<key>showValue</key>
-			<true/>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>footerText</key>
 			<string>Softness of the glass view.</string>
 			<key>label</key>
 			<string>Blur</string>
