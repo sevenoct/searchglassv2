@@ -12,6 +12,10 @@ extern char **environ;
 
 @interface GSRootListController : PSListController
 @end
+@interface GSPillListController : PSListController
+@end
+@interface GSFieldListController : PSListController
+@end
 
 @implementation GSRootListController
 - (NSArray *)specifiers {
@@ -42,5 +46,19 @@ extern char **environ;
     pid_t pid;
     char *args[] = {(char *)"killall", (char *)"-9", (char *)"SpringBoard", NULL};
     posix_spawnp(&pid, "killall", NULL, NULL, args, environ);
+}
+@end
+
+@implementation GSPillListController
+- (NSArray *)specifiers {
+    if (!_specifiers) _specifiers = [self loadSpecifiersFromPlistName:@"Pill" target:self];
+    return _specifiers;
+}
+@end
+
+@implementation GSFieldListController
+- (NSArray *)specifiers {
+    if (!_specifiers) _specifiers = [self loadSpecifiersFromPlistName:@"Field" target:self];
+    return _specifiers;
 }
 @end
