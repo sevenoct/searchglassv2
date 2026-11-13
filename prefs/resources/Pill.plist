@@ -68,7 +68,7 @@
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
-			<real>10.0</real>
+			<real>20.0</real>
 			<key>defaults</key>
 			<string>com.hasan.glasssearch</string>
 			<key>isContinuous</key>
@@ -76,7 +76,7 @@
 			<key>key</key>
 			<string>Pill.Blur</string>
 			<key>max</key>
-			<real>40.0</real>
+			<real>60.0</real>
 			<key>min</key>
 			<real>0.0</real>
 			<key>showValue</key>
@@ -86,7 +86,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>Backdrop bending through the glass view. 0 = off. Negative values flip the bending direction.</string>
+			<string>Backdrop bending at the glass edge. 0 = off. Negative values flip the direction.</string>
 			<key>label</key>
 			<string>Refraction</string>
 		</dict>
@@ -96,7 +96,7 @@
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
-			<real>0.6</real>
+			<real>0.35</real>
 			<key>defaults</key>
 			<string>com.hasan.glasssearch</string>
 			<key>isContinuous</key>
@@ -180,7 +180,7 @@
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
-			<real>12.0</real>
+			<real>10.0</real>
 			<key>defaults</key>
 			<string>com.hasan.glasssearch</string>
 			<key>isContinuous</key>
@@ -198,7 +198,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>Show adaptive rim highlights on this glass surface.</string>
+			<string>Rim highlight on the glass edge. "Glass" is closest to the dock / Control Center.</string>
 			<key>label</key>
 			<string>Specular Type</string>
 		</dict>
@@ -208,7 +208,7 @@
 			<key>cell</key>
 			<string>PSLinkListCell</string>
 			<key>default</key>
-			<integer>3</integer>
+			<integer>2</integer>
 			<key>defaults</key>
 			<string>com.hasan.glasssearch</string>
 			<key>detail</key>
@@ -316,7 +316,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>Color used while the device is in Light Mode (hex).</string>
+			<string>Color laid over the glass in Light Mode (hex).</string>
 			<key>label</key>
 			<string>Light Tint</string>
 		</dict>
@@ -350,7 +350,7 @@
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
-			<real>0.2</real>
+			<real>0.25</real>
 			<key>defaults</key>
 			<string>com.hasan.glasssearch</string>
 			<key>isContinuous</key>
@@ -368,7 +368,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>Color used while the device is in Dark Mode (hex).</string>
+			<string>Color laid over the glass in Dark Mode (hex). White at low opacity = frosted like the dock.</string>
 			<key>label</key>
 			<string>Dark Tint</string>
 		</dict>
@@ -380,7 +380,7 @@
 			<key>cell</key>
 			<string>PSEditTextCell</string>
 			<key>default</key>
-			<string>#000000</string>
+			<string>#FFFFFF</string>
 			<key>defaults</key>
 			<string>com.hasan.glasssearch</string>
 			<key>key</key>
@@ -402,7 +402,7 @@
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
-			<real>0.15</real>
+			<real>0.1</real>
 			<key>defaults</key>
 			<string>com.hasan.glasssearch</string>
 			<key>isContinuous</key>

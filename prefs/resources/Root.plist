@@ -180,9 +180,17 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>Perubahan setting langsung terlihat. Respring hanya perlu kalau swipe-down bawaan masih muncul setelah Enabled diubah.</string>
+			<string>Perubahan setting langsung terlihat. Reset mengembalikan semua nilai ke default terbaru.</string>
 			<key>label</key>
 			<string></string>
+		</dict>
+		<dict>
+			<key>action</key>
+			<string>resetDefaults</string>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>Reset to Defaults</string>
 		</dict>
 		<dict>
 			<key>action</key>
