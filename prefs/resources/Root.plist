@@ -2,25 +2,198 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>title</key><string>GlassSearch</string>
 	<key>items</key>
 	<array>
 		<dict>
-			<key>cell</key><string>PSGroupCell</string>
-			<key>label</key><string>Posisi Search Pill</string>
-			<key>footerText</key><string>Geser ke kanan untuk menaikkan pill, ke kiri untuk menurunkannya. 0 = posisi default tepat di atas dock.</string>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>Master switch, glass strength and rendering quality for every surface.</string>
+			<key>label</key>
+			<string>Main Controls</string>
 		</dict>
 		<dict>
-			<key>cell</key><string>PSSliderCell</string>
-			<key>key</key><string>pillOffset</string>
-			<key>default</key><real>0</real>
-			<key>min</key><real>-60</real>
-			<key>max</key><real>400</real>
-			<key>showValue</key><true/>
-			<key>isContinuous</key><true/>
-			<key>defaults</key><string>com.hasan.glasssearch</string>
-			<key>PostNotification</key><string>com.hasan.glasssearch/prefs</string>
+			<key>PostNotification</key>
+			<string>com.hasan.glasssearch/prefs</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.hasan.glasssearch</string>
+			<key>key</key>
+			<string>Enabled</string>
+			<key>label</key>
+			<string>Enabled</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>Blur multiplier applied on top of each surface's Blur.</string>
+			<key>label</key>
+			<string>Liquid Glass</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.hasan.glasssearch/prefs</string>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>default</key>
+			<real>1.0</real>
+			<key>defaults</key>
+			<string>com.hasan.glasssearch</string>
+			<key>isContinuous</key>
+			<true/>
+			<key>key</key>
+			<string>Liquidity</string>
+			<key>max</key>
+			<real>3.0</real>
+			<key>min</key>
+			<real>0.2</real>
+			<key>showValue</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>Backdrop texture scale. Lower improves performance but reduces visual quality.</string>
+			<key>label</key>
+			<string>Quality</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.hasan.glasssearch/prefs</string>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>default</key>
+			<real>0.5</real>
+			<key>defaults</key>
+			<string>com.hasan.glasssearch</string>
+			<key>isContinuous</key>
+			<true/>
+			<key>key</key>
+			<string>Quality</string>
+			<key>max</key>
+			<real>1.0</real>
+			<key>min</key>
+			<real>0.15</real>
+			<key>showValue</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>Use device motion to steer glass specular highlights.</string>
+			<key>label</key>
+			<string>Motion Highlights</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.hasan.glasssearch/prefs</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<false/>
+			<key>defaults</key>
+			<string>com.hasan.glasssearch</string>
+			<key>key</key>
+			<string>MotionHighlights</string>
+			<key>label</key>
+			<string>Motion Highlights</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>How strongly device compass steers the highlight.</string>
+			<key>label</key>
+			<string>Motion Sensitivity</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.hasan.glasssearch/prefs</string>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>default</key>
+			<real>1.0</real>
+			<key>defaults</key>
+			<string>com.hasan.glasssearch</string>
+			<key>isContinuous</key>
+			<true/>
+			<key>key</key>
+			<string>MotionSensitivity</string>
+			<key>max</key>
+			<real>3.0</real>
+			<key>min</key>
+			<real>0.0</real>
+			<key>showValue</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>Pill di atas dock: posisi, blur, refraksi, specular, tint.</string>
+			<key>label</key>
+			<string></string>
+		</dict>
+		<dict>
+			<key>bundle</key>
+			<string>GlassSearchPrefs</string>
+			<key>cell</key>
+			<string>PSLinkCell</string>
+			<key>detail</key>
+			<string>PSListController</string>
+			<key>isController</key>
+			<true/>
+			<key>label</key>
+			<string>Search Pill</string>
+			<key>plist</key>
+			<string>Pill</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>Search bar di atas keyboard dan kartu hasil.</string>
+			<key>label</key>
+			<string></string>
+		</dict>
+		<dict>
+			<key>bundle</key>
+			<string>GlassSearchPrefs</string>
+			<key>cell</key>
+			<string>PSLinkCell</string>
+			<key>detail</key>
+			<string>PSListController</string>
+			<key>isController</key>
+			<true/>
+			<key>label</key>
+			<string>Search Field</string>
+			<key>plist</key>
+			<string>Field</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>Perubahan setting langsung terlihat. Respring hanya perlu kalau swipe-down bawaan masih muncul setelah Enabled diubah.</string>
+			<key>label</key>
+			<string></string>
+		</dict>
+		<dict>
+			<key>action</key>
+			<string>respring</string>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>Respring</string>
 		</dict>
 	</array>
+	<key>title</key>
+	<string>GlassSearch</string>
 </dict>
 </plist>

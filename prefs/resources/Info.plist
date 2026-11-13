@@ -8,8 +8,8 @@
 	<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
 	<key>CFBundleName</key><string>GlassSearchPrefs</string>
 	<key>CFBundlePackageType</key><string>BNDL</string>
-	<key>CFBundleShortVersionString</key><string>0.2.0</string>
-	<key>CFBundleVersion</key><string>0.2.0</string>
+	<key>CFBundleShortVersionString</key><string>0.3.0</string>
+	<key>CFBundleVersion</key><string>0.3.0</string>
 	<key>NSPrincipalClass</key><string>GSRootListController</string>
 </dict>
 </plist>
