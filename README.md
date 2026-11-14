@@ -1,4 +1,8 @@
-# GlassSearch 0.3.1 (iOS 15, SpringBoard)
+# GlassSearch 0.3.3 (iOS 15, SpringBoard)
+
+Baru di 0.3.3: swipe-down interaktif ala iOS 26. Blur + gelap + homescreen (ikon & dock mengecil/tertarik)
+mengikuti jari, jadi pelan di-swipe = pelan animasinya. Lepas jari > ~35% (atau flick cepat) -> search bar + keyboard naik;
+lepas sebelum itu -> batal dan homescreen kembali smooth.
 
 Baru di 0.3: renderer glass + Settings bergaya Liquid (Gl)ass.
 - Glass: CABackdropLayer + CAFilter (displacementMap, gaussianBlur, colorSaturate), ring specular (None/Border/Glass/iOS 26/iOS 27),

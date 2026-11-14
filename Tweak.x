@@ -440,6 +440,7 @@ static UIView *gsPillInner;          // ikon + teks "Search"
 static UIView *gsDotsBox;            // titik halaman
 static NSMutableArray<UIView *> *gsDots;
 static BOOL gsPillSuppressed;
+static BOOL gsOverlayActive;         // overlay search / drag sedang berjalan
 static __weak UIView *gsRoot;
 static CGFloat gsMorph = 0;          // 0 = pill, 1 = titik dua
 static CGFloat gsPageP = 0;          // posisi halaman (kontinu)
@@ -548,21 +549,22 @@ static UIScrollView *GSHomeScroll(UIView *root) {
     return sv;
 }
 
-// Homescreen "ketarik" mengikuti progress swipe (0..1): ikon + dock mengecil dan turun sedikit
+// Homescreen "ketarik" mengikuti progress swipe (0..1): ikon + dock mengecil dan turun sedikit.
+// Pakai layer.sublayerTransform (bukan view.transform) supaya tidak bentrok dengan transform
+// milik SpringBoard sendiri (animasi buka app, dll) -> tidak ada lagi posisi ikon yang "nyangkut".
 static void GSApplyHome(CGFloat p) {
     UIView *root = gsRoot;
     if (!root) return;
-    CGAffineTransform T = CGAffineTransformIdentity;
+    CATransform3D T = CATransform3DIdentity;
     if (p > 0.0001) {
         CGFloat s = 1 - 0.075 * p;
-        T = CGAffineTransformScale(CGAffineTransformMakeTranslation(0, 30 * p), s, s);
+        T = CATransform3DScale(CATransform3DMakeTranslation(0, 30 * p, 0), s, s, 1);
     }
     UIView *sv = GSHomeScroll(root), *dock = GSDockOf(root);
-    if (sv) sv.transform = T;
-    if (dock) dock.transform = T;
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
-    GSLayoutPill();
+    if (sv) sv.layer.sublayerTransform = T;
+    if (dock) dock.layer.sublayerTransform = T;
     [CATransaction commit];
 }
 
@@ -822,6 +824,7 @@ static void GSOpenApp(NSString *bid) {
     CGRect rect = gsPill ? [gsPill convertRect:gsPill.bounds toView:nil] : CGRectZero;
     if (CGRectIsEmpty(rect)) rect = CGRectMake(CGRectGetMidX(scr) - 46, CGRectGetHeight(scr) - 150, 92, 30);
     _pillRect = rect; _dismissing = NO; _kbSeen = NO; _committed = NO; _interactive = NO; _progress = 0;
+    gsOverlayActive = YES;
     _prevKey = UIApplication.sharedApplication.keyWindow;
     [self loadApps];
 
@@ -911,6 +914,7 @@ static void GSOpenApp(NSString *bid) {
     _prevKey = nil;
     _interactive = _committed = _dismissing = NO;
     _progress = 0;
+    gsOverlayActive = NO;
     gsPillSuppressed = NO; gsPill.hidden = NO;
 }
 
@@ -1114,6 +1118,11 @@ static BOOL GSInRootFolder(UIView *v) {
     [[GSScrollWatcher shared] watch:sv];
 
     UIView *dock = GSDockOf(root);
+    if (!gsOverlayActive) {
+        UIView *hs = GSHomeScroll(root);
+        if (hs && !CATransform3DIsIdentity(hs.layer.sublayerTransform)) hs.layer.sublayerTransform = CATransform3DIdentity;
+        if (dock && !CATransform3DIsIdentity(dock.layer.sublayerTransform)) dock.layer.sublayerTransform = CATransform3DIdentity;
+    }
     GSLayoutPill();
     gsPill.hidden = gsPillSuppressed || !gsMaster || (dock && dock.hidden);
     [root bringSubviewToFront:gsPill];
