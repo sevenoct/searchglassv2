@@ -540,11 +540,40 @@ static void GSLayoutPill(void) {
 
 #pragma mark - Overlay controller
 
+// Scroll view halaman ikon di SBRootFolderView
+static UIScrollView *GSHomeScroll(UIView *root) {
+    UIScrollView *sv = nil;
+    @try { id x = [root valueForKey:@"scrollView"]; if ([x isKindOfClass:UIScrollView.class]) sv = x; } @catch (id e) {}
+    if (!sv) for (UIView *s in root.subviews) if ([s isKindOfClass:UIScrollView.class]) { sv = (UIScrollView *)s; break; }
+    return sv;
+}
+
+// Homescreen "ketarik" mengikuti progress swipe (0..1): ikon + dock mengecil dan turun sedikit
+static void GSApplyHome(CGFloat p) {
+    UIView *root = gsRoot;
+    if (!root) return;
+    CGAffineTransform T = CGAffineTransformIdentity;
+    if (p > 0.0001) {
+        CGFloat s = 1 - 0.075 * p;
+        T = CGAffineTransformScale(CGAffineTransformMakeTranslation(0, 30 * p), s, s);
+    }
+    UIView *sv = GSHomeScroll(root), *dock = GSDockOf(root);
+    if (sv) sv.transform = T;
+    if (dock) dock.transform = T;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    GSLayoutPill();
+    [CATransaction commit];
+}
+
 @interface GSController : UIViewController <UITextFieldDelegate, UITableViewDataSource, UITableViewDelegate, UIGestureRecognizerDelegate>
 + (instancetype)shared;
 - (void)presentFromRect:(CGRect)rect;
 - (void)dismissThen:(void (^)(void))then;
 - (void)pillTapped;
+- (BOOL)beginInteractive;
+- (void)updateInteractive:(CGFloat)p;
+- (void)endInteractiveWithVelocity:(CGFloat)vy;
 @end
 
 static UIImage *GSIcon(NSString *bid) {
@@ -611,14 +640,20 @@ static void GSOpenApp(NSString *bid) {
 @implementation GSController {
     UIWindow *_window, *_prevKey;
     UIVisualEffectView *_backdrop;
+    UIViewPropertyAnimator *_blurAnim;   // blur "dipause" dan dikendalikan lewat fractionComplete
     UIView *_dim;
     GSBar *_bar;
     GSGlassView *_card;
     UITableView *_table;
     NSArray<NSDictionary *> *_allApps, *_results;
     CGRect _pillRect;
-    CGFloat _kbTop;
-    BOOL _dismissing, _kbSeen;
+    CGFloat _kbTop, _progress;
+    BOOL _dismissing, _kbSeen, _interactive, _committed;
+    CADisplayLink *_link;
+    CFTimeInterval _animStart;
+    CGFloat _animFrom, _animTo;
+    double _animDur;
+    void (^_animDone)(void);
 }
 
 + (instancetype)shared {
@@ -633,11 +668,6 @@ static void GSOpenApp(NSString *bid) {
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.view.backgroundColor = UIColor.clearColor;
-
-    _backdrop = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterialDark]];
-    _backdrop.frame = self.view.bounds;
-    _backdrop.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    [self.view addSubview:_backdrop];
 
     _dim = [[UIView alloc] initWithFrame:self.view.bounds];
     _dim.backgroundColor = [UIColor colorWithWhite:0 alpha:0.28];
@@ -741,19 +771,57 @@ static void GSOpenApp(NSString *bid) {
     [self applyLayoutWithDuration:d options:(UIViewAnimationOptions)(c << 16)];
 }
 
-#pragma mark Present / dismiss
+#pragma mark Progress (0 = home biasa, 1 = search terbuka)
 
-- (void)pillTapped {
-    CGRect r = gsPill ? [gsPill convertRect:gsPill.bounds toView:nil] : CGRectZero;
-    [self presentFromRect:r];
+- (void)applyProgress:(CGFloat)p {
+    p = GSClamp(p, 0, 1);
+    _progress = p;
+    @try { _blurAnim.fractionComplete = MIN(p, 0.999); } @catch (id e) {}
+    _dim.alpha = p;
+    GSApplyHome(p);
 }
 
-- (void)presentFromRect:(CGRect)rect {
-    if (_window) return;
+- (void)stopAnim {
+    [_link invalidate];
+    _link = nil;
+    _animDone = nil;
+}
+
+- (void)animateTo:(CGFloat)to duration:(double)d completion:(void (^)(void))done {
+    [self stopAnim];
+    if (fabs(_progress - to) < 0.002 || d <= 0) {
+        [self applyProgress:to];
+        if (done) done();
+        return;
+    }
+    _animFrom = _progress; _animTo = to; _animDur = d;
+    _animStart = CACurrentMediaTime();
+    _animDone = [done copy];
+    _link = [CADisplayLink displayLinkWithTarget:self selector:@selector(tick:)];
+    [_link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
+}
+
+- (void)tick:(CADisplayLink *)l {
+    CGFloat t = MIN(1, (CACurrentMediaTime() - _animStart) / _animDur);
+    CGFloat e = 1 - powf(1 - t, 3);                       // ease-out: pelan di akhir seperti iOS
+    [self applyProgress:_animFrom + (_animTo - _animFrom) * e];
+    if (t >= 1) {
+        void (^d)(void) = _animDone;
+        [self stopAnim];
+        if (d) d();
+    }
+}
+
+#pragma mark Present / dismiss
+
+// Siapkan window overlay (blur + dim) pada progress 0. Belum jadi key window.
+- (BOOL)prepare {
+    if (_window) return NO;
     GSLoadPrefs();
     CGRect scr = UIScreen.mainScreen.bounds;
+    CGRect rect = gsPill ? [gsPill convertRect:gsPill.bounds toView:nil] : CGRectZero;
     if (CGRectIsEmpty(rect)) rect = CGRectMake(CGRectGetMidX(scr) - 46, CGRectGetHeight(scr) - 150, 92, 30);
-    _pillRect = rect; _dismissing = NO; _kbSeen = NO;
+    _pillRect = rect; _dismissing = NO; _kbSeen = NO; _committed = NO; _interactive = NO; _progress = 0;
     _prevKey = UIApplication.sharedApplication.keyWindow;
     [self loadApps];
 
@@ -761,21 +829,47 @@ static void GSOpenApp(NSString *bid) {
     _window.windowLevel = UIWindowLevelAlert + 50;
     _window.backgroundColor = UIColor.clearColor;
     _window.rootViewController = self;
-    [_window makeKeyAndVisible];
+    _window.userInteractionEnabled = NO;       // selama ditarik, sentuhan tetap milik gesture homescreen
+    _window.hidden = NO;
     [self.view layoutIfNeeded];
 
-    gsPillSuppressed = YES; gsPill.hidden = YES;
+    [_backdrop removeFromSuperview];
+    _backdrop = [[UIVisualEffectView alloc] initWithEffect:nil];
+    _backdrop.frame = self.view.bounds;
+    _backdrop.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    [self.view insertSubview:_backdrop atIndex:0];
+    UIBlurEffect *be = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterialDark];
+    UIVisualEffectView *bd = _backdrop;
+    _blurAnim = [[UIViewPropertyAnimator alloc] initWithDuration:1 curve:UIViewAnimationCurveLinear animations:^{ bd.effect = be; }];
+    _blurAnim.pausesOnCompletion = YES;
+    _blurAnim.fractionComplete = 0;
+
     _results = @[]; [_table reloadData];
     _bar.field.text = @"";
-    _backdrop.alpha = 0; _dim.alpha = 0; _card.alpha = 0;
+    _bar.hidden = YES;
+    _dim.alpha = 0; _card.alpha = 0;
     _bar.frame = rect; _bar.layer.cornerRadius = [_bar radiusForSize:rect.size];
     _bar.icon.alpha = _bar.field.alpha = _bar.mic.alpha = 0;
     _kbTop = CGRectGetHeight(scr) - 300;
+    return YES;
+}
+
+// Search bar + keyboard naik. Progress lanjut ke 1 dengan ease-out.
+- (void)commitSearch {
+    if (!_window || _committed || _dismissing) return;
+    _committed = YES; _interactive = NO;
+    _window.userInteractionEnabled = YES;
+    CGRect cur = gsPill ? [gsPill convertRect:gsPill.bounds toView:nil] : _pillRect;
+    gsPillSuppressed = YES; gsPill.hidden = YES;
+    _bar.hidden = NO;
+    _bar.frame = cur; _bar.layer.cornerRadius = [_bar radiusForSize:cur.size];
+    _bar.icon.alpha = _bar.field.alpha = _bar.mic.alpha = 0;
 
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(kbChange:)
         name:UIKeyboardWillChangeFrameNotification object:nil];
-    [UIView animateWithDuration:0.30 animations:^{ self->_backdrop.alpha = 1; self->_dim.alpha = 1; }];
+    [_window makeKeyAndVisible];
     [_bar.field becomeFirstResponder];
+    [self animateTo:1 duration:0.42 completion:nil];
 
     // cadangan kalau notifikasi keyboard tidak datang (mis. keyboard hardware)
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -784,23 +878,54 @@ static void GSOpenApp(NSString *bid) {
     });
 }
 
+- (void)presentFromRect:(CGRect)rect {      // tap pill: animasi otomatis dari 0 ke 1
+    if (![self prepare]) return;
+    [self commitSearch];
+}
+
+- (void)pillTapped { [self presentFromRect:CGRectZero]; }
+
+- (BOOL)beginInteractive { if (![self prepare]) return NO; _interactive = YES; return YES; }
+
+- (void)updateInteractive:(CGFloat)p { if (_interactive) [self applyProgress:p]; }
+
+- (void)endInteractiveWithVelocity:(CGFloat)vy {
+    if (!_interactive) return;
+    _interactive = NO;
+    BOOL go = _progress > 0.35 || vy > 900;
+    if (vy < -300) go = NO;                       // dilempar ke atas = batal
+    if (go) { [self commitSearch]; return; }
+    [self animateTo:0 duration:0.30 completion:^{ [self teardown]; }];
+}
+
+- (void)teardown {
+    [self stopAnim];
+    @try { if (_blurAnim.state != UIViewAnimatingStateInactive) [_blurAnim stopAnimation:YES]; } @catch (id e) {}
+    _blurAnim = nil;
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    GSApplyHome(0);
+    _window.hidden = YES;
+    _window.rootViewController = nil;
+    _window = nil;
+    [_prevKey makeKeyWindow];
+    _prevKey = nil;
+    _interactive = _committed = _dismissing = NO;
+    _progress = 0;
+    gsPillSuppressed = NO; gsPill.hidden = NO;
+}
+
 - (void)dismissThen:(void (^)(void))then {
     if (!_window || _dismissing) return;
-    _dismissing = YES;
+    _dismissing = YES; _interactive = NO;
     [_bar.field resignFirstResponder];
-    [UIView animateWithDuration:0.22 delay:0 options:UIViewAnimationOptionCurveEaseInOut animations:^{
-        self->_backdrop.alpha = 0; self->_dim.alpha = 0; self->_card.alpha = 0;
+    [UIView animateWithDuration:0.26 delay:0 options:UIViewAnimationOptionCurveEaseInOut | UIViewAnimationOptionBeginFromCurrentState animations:^{
+        self->_card.alpha = 0;
         self->_bar.frame = self->_pillRect;
         self->_bar.layer.cornerRadius = [self->_bar radiusForSize:self->_pillRect.size];
         self->_bar.icon.alpha = self->_bar.field.alpha = self->_bar.mic.alpha = 0;
-    } completion:^(BOOL f) {
-        [[NSNotificationCenter defaultCenter] removeObserver:self];
-        self->_window.hidden = YES;
-        self->_window.rootViewController = nil;
-        self->_window = nil;
-        [self->_prevKey makeKeyWindow];
-        self->_prevKey = nil;
-        gsPillSuppressed = NO; gsPill.hidden = NO;
+    } completion:nil];
+    [self animateTo:0 duration:0.34 completion:^{
+        [self teardown];
         if (then) then();
     }];
 }
@@ -876,11 +1001,25 @@ static void GSPresentFromNative(void) {
 }
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)a shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)b { return YES; }
 - (void)pan:(UIPanGestureRecognizer *)g {
-    static BOOL fired;
-    if (g.state == UIGestureRecognizerStateBegan) { fired = NO; return; }
-    if (g.state == UIGestureRecognizerStateChanged && !fired) {
-        CGPoint t = [g translationInView:g.view];
-        if (t.y > 60 && t.y > fabs(t.x) * 1.5) { fired = YES; GSPresentFromNative(); }
+    static BOOL active;
+    GSController *c = [GSController shared];
+    switch (g.state) {
+        case UIGestureRecognizerStateBegan:
+        case UIGestureRecognizerStateChanged: {
+            if (g.state == UIGestureRecognizerStateBegan) active = [c beginInteractive];
+            if (!active) return;
+            // progress mengikuti jari: 0 -> 1 sepanjang ~240pt (pelan = animasi pelan)
+            [c updateInteractive:[g translationInView:g.view].y / 240.0];
+            break;
+        }
+        case UIGestureRecognizerStateEnded:
+            if (active) { active = NO; [c endInteractiveWithVelocity:[g velocityInView:g.view].y]; }
+            break;
+        case UIGestureRecognizerStateCancelled:
+        case UIGestureRecognizerStateFailed:
+            if (active) { active = NO; [c endInteractiveWithVelocity:-1000]; }
+            break;
+        default: break;
     }
 }
 @end
